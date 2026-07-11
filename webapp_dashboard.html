@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>기후 변화에 따른 농산물 물가(반입량) 분석 대시보드</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { theme: { extend: { colors: {
+    background: '#f8f9ff', primary: '#006d32', 'primary-container': '#00d166', 'on-primary': '#ffffff',
+    secondary: '#0059bb', surface: '#f8f9ff', 'surface-container': '#e5eeff',
+    'surface-container-low': '#eff4ff', 'surface-container-lowest': '#ffffff',
+    'on-surface': '#0b1c30', 'on-surface-variant': '#3c4a3d', 'outline-variant': '#bbcbb9'
+  } } } };
+</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', sans-serif; background-color: #f8f9ff; color: #0b1c30; }
+  h1, h2, h3, .font-space { font-family: 'Space Grotesk', sans-serif; }
+  .m3-card { background-color: #ffffff; border: 1px solid rgba(187,203,185,0.3);
+    box-shadow: 0 4px 12px rgba(11,28,48,0.03), 0 1px 3px rgba(11,28,48,0.02); border-radius: 1.25rem; }
+  .tab-active { border-color: #006d32; box-shadow: 0 2px 8px rgba(0,109,50,0.15); background-color: #e5eeff; color: #006d32; }
+  .tab-inactive { opacity: .7; border-color: transparent; color: #3c4a3d; }
+  .seg-btn { padding: 6px 14px; border-radius: 8px; font-size: .8rem; font-weight: 600; cursor: pointer; color: #3c4a3d; }
+  .seg-btn.active { background: #e5eeff; color: #006d32; }
+  label.field-label { font-size: .75rem; font-weight: 600; color: #3c4a3d; display: block; margin-bottom: 4px; }
+  input[type=text], input[type=date], input[type=month] {
+    width: 100%; border: 1px solid #bbcbb9; border-radius: 8px; padding: 8px 10px; font-size: .85rem; background: #eff4ff;
+  }
+</style>
+</head>
+<body class="min-h-screen p-6 bg-background text-on-surface">
+  <header class="max-w-[1400px] mx-auto mb-8 text-center">
+    <h1 class="text-4xl font-space font-bold tracking-tight mb-2 text-primary">기후 변화에 따른 농산물 물가(반입량) 분석</h1>
+    <p class="text-on-surface-variant mb-6 text-sm" id="header-sub">생성 시각: 2026-07-04 17:07 · 가락시장 반입량(공급량)과 전국 기후 실측 데이터로 살펴보는 기후-공급 상관 분석 웹앱</p>
+    <div class="inline-flex m3-card p-1 rounded-full bg-surface-container-low shadow-sm">
+      <button onclick="switchTab('analysis')" id="tab-analysis" class="tab-active px-6 py-2 rounded-full font-semibold transition-all duration-300">📊 기후-물가 상관분석</button>
+      <button onclick="switchTab('garak')" id="tab-garak" class="tab-inactive px-6 py-2 rounded-full font-semibold transition-all duration-300">🥬 가락시장 반입량</button>
+      <button onclick="switchTab('climate')" id="tab-climate" class="tab-inactive px-6 py-2 rounded-full font-semibold transition-all duration-300">🌡️ 전국 기후 관측</button>
+    </div>
+  </header>
+
+  <main class="max-w-[1400px] mx-auto grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
+    <!-- ===================== 상관분석 컨트롤 패널 ===================== -->
+    <aside id="panel-analysis" class="m3-card p-5 h-fit space-y-5">
+      <h3 class="font-space font-bold text-lg text-primary">📊 상관분석 옵션</h3>
+      <div>
+        <label class="field-label">분석 품목</label>
+        <select id="analysis-item" class="w-full border border-outline-variant rounded-lg p-2 text-sm bg-surface-container-low"></select>
+      </div>
+      <div>
+        <label class="field-label">조회 기간</label>
+        <input type="date" id="analysis-start-date" value="2021-01-04">
+        <div class="h-2"></div>
+        <input type="date" id="analysis-end-date" value="2026-07-03">
+      </div>
+      <button onclick="renderAnalysis()" class="w-full bg-primary text-white font-semibold py-2 rounded-lg hover:opacity-90 transition-all">🔄 분석 실행</button>
+      <p class="text-[11px] text-on-surface-variant leading-relaxed border-t border-outline-variant/20 pt-3">
+        가락시장 반입량(공급량 실측치)과 기상청 ASOS 전국평균 기온(실측치)의 상관관계를 분석합니다. 실제 소비자 가격 데이터는 포함되어 있지 않으며,
+        공급량 감소는 통상 가격 상승 압력으로 이어진다는 경제적 추론에 근거한 간접 분석입니다.
+      </p>
+    </aside>
+
+    <!-- ===================== 상관분석 콘텐츠 ===================== -->
+    <section id="view-analysis" class="space-y-6">
+      <div class="m3-card p-6 bg-surface-container-lowest">
+        <h3 class="text-lg font-space font-semibold mb-3 text-secondary flex items-center gap-2">🧪 가설 (Hypothesis)</h3>
+        <ul class="space-y-2 text-xs text-on-surface-variant list-disc list-inside leading-relaxed">
+          <li>평균기온이 계절 평균보다 큰 폭으로 벗어날수록(폭염·이상저온), 반입량(공급량)이 감소해 가격 상승 압력이 커진다.</li>
+          <li>기온의 영향은 당일보다 일정 시차(Time-Lag)를 두고 반입량에 더 크게 반영될 수 있다 (예: 폭염 이후 생육 피해가 몇 주 뒤 출하량 감소로 나타남).</li>
+          <li>이 분석은 실제 가격 데이터가 아닌 <strong>반입량(공급)과 기온의 실측 상관관계</strong>를 계산한 것이며, 상관계수가 0에 가까우면 뚜렷한 관계가 없다는 뜻입니다.</li>
+        </ul>
+      </div>
+
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="analysis-kpis"></div>
+
+      <div class="m3-card p-6">
+        <h2 class="text-lg font-space font-semibold mb-3">⏱️ 시차(Lag)별 기온-반입량 상관계수</h2>
+        <p class="text-xs text-on-surface-variant mb-2">막대가 0에서 멀수록(양+/음-) 해당 시차에서 기온과 반입량의 연관성이 강하다는 뜻입니다.</p>
+        <div id="analysis-chart-lag" style="height:280px;"></div>
+      </div>
+
+      <div class="m3-card p-6">
+        <h2 class="text-lg font-space font-semibold mb-3">📈 반입량 vs 전국평균 기온 (동시 비교)</h2>
+        <div id="analysis-chart-overlay" style="height:380px;"></div>
+      </div>
+
+      <div class="m3-card p-6">
+        <h2 class="text-lg font-space font-semibold mb-3">🔬 산점도: 기온 vs 반입량 (최적 시차 적용)</h2>
+        <div id="analysis-chart-scatter" style="height:380px;"></div>
+      </div>
+    </section>
+
+    <!-- ===================== 가락시장 컨트롤 패널 ===================== -->
+    <aside id="panel-garak" class="m3-card p-5 h-fit space-y-5 hidden">
+      <h3 class="font-space font-bold text-lg text-primary">🥬 가락시장 옵션</h3>
+      <div>
+        <label class="field-label">조회 품목 (쉼표 구분)</label>
+        <input type="text" id="garak-items" value="배추, 양배추, 배추얼갈이, 알배기배추">
+      </div>
+      <div>
+        <label class="field-label">조회 방식</label>
+        <div class="inline-flex bg-surface-container-low rounded-lg p-1 gap-1">
+          <span class="seg-btn active" id="garak-mode-daily" onclick="setGarakMode('daily')">일별</span>
+          <span class="seg-btn" id="garak-mode-monthly" onclick="setGarakMode('monthly')">월별</span>
+        </div>
+      </div>
+      <div id="garak-daily-range">
+        <label class="field-label">조회 기간</label>
+        <input type="date" id="garak-start-date" value="2021-01-04">
+        <div class="h-2"></div>
+        <input type="date" id="garak-end-date" value="2026-07-03">
+      </div>
+      <div id="garak-monthly-range" class="hidden">
+        <label class="field-label">시작 월</label>
+        <input type="month" id="garak-start-month" value="2021-01">
+        <div class="h-2"></div>
+        <label class="field-label">종료 월</label>
+        <input type="month" id="garak-end-month" value="2026-07">
+      </div>
+      <button onclick="renderGarak()" class="w-full bg-primary text-white font-semibold py-2 rounded-lg hover:opacity-90 transition-all">🔄 적용</button>
+      <p class="text-[11px] text-on-surface-variant leading-relaxed border-t border-outline-variant/20 pt-3">
+        서울시농수산식품공사 가락시장 품목별 반입량(톤) 데이터 (2021-01-01 ~ 2026-07-03, 전국 단위 합계). 데이터는 이 파일 생성 시점 기준입니다.
+      </p>
+    </aside>
+
+    <!-- ===================== 가락시장 콘텐츠 ===================== -->
+    <section id="view-garak" class="space-y-6 hidden">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="garak-kpis"></div>
+      <div class="m3-card p-6">
+        <h2 class="text-lg font-space font-semibold mb-3">📆 품목별 일일 반입량 추이 (전국 단위 합계)</h2>
+        <div id="garak-chart-trend" style="height:380px;"></div>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="m3-card p-6"><h2 class="text-base font-space font-semibold mb-3">월별 합계 반입량</h2><div id="garak-chart-monthly" style="height:340px;"></div></div>
+        <div class="m3-card p-6"><h2 class="text-base font-space font-semibold mb-3">품목별 일일 반입량 분포</h2><div id="garak-chart-box" style="height:340px;"></div></div>
+      </div>
+      <div class="m3-card p-6">
+        <h2 class="text-lg font-space font-semibold mb-3">📋 품목별 통계 요약</h2>
+        <div id="garak-table" class="overflow-x-auto text-sm"></div>
+      </div>
+    </section>
+
+    <!-- ===================== 기후 컨트롤 패널 ===================== -->
+    <aside id="panel-climate" class="m3-card p-5 h-fit space-y-5 hidden">
+      <h3 class="font-space font-bold text-lg text-secondary">🌡️ 기후 분석 옵션</h3>
+      <label class="flex items-center gap-2 text-sm font-medium cursor-pointer">
+        <input type="checkbox" id="climate-nationwide" checked onchange="toggleStationInput()"> 지역 구분 없이 전국 평균으로 보기
+      </label>
+      <div>
+        <label class="field-label">검색 대상 지점 (쉼표 구분)</label>
+        <input type="text" id="climate-stations" value="서울, 부산" disabled>
+      </div>
+      <div>
+        <label class="field-label">조회 방식</label>
+        <div class="inline-flex bg-surface-container-low rounded-lg p-1 gap-1">
+          <span class="seg-btn active" id="climate-mode-daily" onclick="setClimateMode('daily')">일별</span>
+          <span class="seg-btn" id="climate-mode-monthly" onclick="setClimateMode('monthly')">월별</span>
+        </div>
+      </div>
+      <div id="climate-daily-range">
+        <label class="field-label">조회 기간</label>
+        <input type="date" id="climate-start-date" value="2021-01-01">
+        <div class="h-2"></div>
+        <input type="date" id="climate-end-date" value="2026-07-03">
+      </div>
+      <div id="climate-monthly-range" class="hidden">
+        <label class="field-label">시작 월</label>
+        <input type="month" id="climate-start-month" value="2021-01">
+        <div class="h-2"></div>
+        <label class="field-label">종료 월</label>
+        <input type="month" id="climate-end-month" value="2026-07">
+      </div>
+      <button onclick="renderClimate()" class="w-full bg-secondary text-white font-semibold py-2 rounded-lg hover:opacity-90 transition-all">🔄 적용</button>
+      <p class="text-[11px] text-on-surface-variant leading-relaxed border-t border-outline-variant/20 pt-3">
+        기상청 API Hub ASOS 일자료 (전국 14개 주요 지점, 2021-01-01 ~ 2026-07-03). 데이터는 이 파일 생성 시점 기준입니다.
+      </p>
+    </aside>
+
+    <!-- ===================== 기후 콘텐츠 ===================== -->
+    <section id="view-climate" class="space-y-6 hidden">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="climate-kpis"></div>
+      <div class="m3-card p-6">
+        <h2 class="text-lg font-space font-semibold mb-3">🌡️ 기온 변화 트렌드</h2>
+        <div id="climate-chart-temp" style="height:380px;"></div>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="m3-card p-6"><h2 class="text-base font-space font-semibold mb-3">지점별(또는 전국) 누적 강수량 (mm)</h2><div id="climate-chart-rain" style="height:340px;"></div></div>
+        <div class="m3-card p-6"><h2 class="text-base font-space font-semibold mb-3">지점별(또는 전국) 평균 풍속 (m/s)</h2><div id="climate-chart-wind" style="height:340px;"></div></div>
+      </div>
+    </section>
+  </main>
+
+<script>
+const PALETTE = ["#3B82F6","#F97316","#10B981","#EF4444","#8B5CF6","#14B8A6","#F59E0B","#EC4899"];
+
+// [date(YYYYMMDD), 품목명, 합계반입량] 압축 배열
+let GARAK_DATA = [];
+// [date(YYYY-MM-DD), 지점명, 평균기온, 최저기온, 최고기온, 강수량, 최대풍속, 평균풍속] 압축 배열
+let CLIMATE_DATA = [];
+
+function switchTab(tab) {
+  ['analysis', 'garak', 'climate'].forEach(t => {
+    const active = t === tab;
+    document.getElementById(`tab-${t}`).className = (active ? 'tab-active' : 'tab-inactive') + ' px-6 py-2 rounded-full font-semibold transition-all duration-300';
+    document.getElementById(`panel-${t}`).classList.toggle('hidden', !active);
+    document.getElementById(`view-${t}`).classList.toggle('hidden', !active);
+  });
+  window.dispatchEvent(new Event('resize'));
+}
+
+function setGarakMode(mode) {
+  document.getElementById('garak-mode-daily').classList.toggle('active', mode === 'daily');
+  document.getElementById('garak-mode-monthly').classList.toggle('active', mode === 'monthly');
+  document.getElementById('garak-daily-range').classList.toggle('hidden', mode !== 'daily');
+  document.getElementById('garak-monthly-range').classList.toggle('hidden', mode !== 'monthly');
+  window.garakMode = mode;
+}
+function setClimateMode(mode) {
+  document.getElementById('climate-mode-daily').classList.toggle('active', mode === 'daily');
+  document.getElementById('climate-mode-monthly').classList.toggle('active', mode === 'monthly');
+  document.getElementById('climate-daily-range').classList.toggle('hidden', mode !== 'daily');
+  document.getElementById('climate-monthly-range').classList.toggle('hidden', mode !== 'monthly');
+  window.climateMode = mode;
+}
+function toggleStationInput() {
+  document.getElementById('climate-stations').disabled = document.getElementById('climate-nationwide').checked;
+}
+window.garakMode = 'daily';
+window.climateMode = 'daily';
+
+function kpiCard(label, value, icon, color) {
+  return `<div class="m3-card p-4" style="border-top:4px solid ${color}">
+    <div class="text-xs text-on-surface-variant font-semibold mb-1">${icon} ${label}</div>
+    <div class="text-xl font-space font-bold text-on-surface">${value}</div></div>`;
+}
+
+function getGarakRange() {
+  if (window.garakMode === 'daily') {
+    return [document.getElementById('garak-start-date').value.replace(/-/g,''), document.getElementById('garak-end-date').value.replace(/-/g,'')];
+  }
+  const sm = document.getElementById('garak-start-month').value, em = document.getElementById('garak-end-month').value;
+  return [sm.replace('-','')+'01', em.replace('-','')+'31'];
+}
+function getClimateRange() {
+  if (window.climateMode === 'daily') {
+    return [document.getElementById('climate-start-date').value, document.getElementById('climate-end-date').value];
+  }
+  const sm = document.getElementById('climate-start-month').value, em = document.getElementById('climate-end-month').value;
+  return [sm+'-01', em+'-31'];
+}
+function toISO(yyyymmdd) { return yyyymmdd.slice(0,4)+'-'+yyyymmdd.slice(4,6)+'-'+yyyymmdd.slice(6,8); }
+
+function renderGarak() {
+  const itemsInput = document.getElementById('garak-items').value;
+  const items = itemsInput.split(',').map(s => s.trim()).filter(Boolean);
+  const [startD, endD] = getGarakRange();
+
+  const filtered = GARAK_DATA.filter(r => {
+    const d = r[0];
+    if (d < startD || d > endD) return false;
+    return items.some(kw => r[1].includes(kw));
+  });
+
+  if (filtered.length === 0) {
+    document.getElementById('garak-kpis').innerHTML = '<p class="col-span-4 text-on-surface-variant">조건에 맞는 데이터가 없습니다.</p>';
+    return;
+  }
+
+  const itemNames = [...new Set(filtered.map(r => r[1]))];
+  const totalByItem = {};
+  itemNames.forEach(n => totalByItem[n] = filtered.filter(r => r[1] === n).reduce((a,r) => a+r[2], 0));
+  itemNames.sort((a,b) => totalByItem[b] - totalByItem[a]);
+  const colorOf = {}; itemNames.forEach((n,i) => colorOf[n] = PALETTE[i % PALETTE.length]);
+
+  const dates = [...new Set(filtered.map(r => r[0]))].sort();
+  const latestDate = dates[dates.length-1];
+  const latestTotal = filtered.filter(r => r[0] === latestDate).reduce((a,r)=>a+r[2],0);
+
+  document.getElementById('garak-kpis').innerHTML = [
+    kpiCard('수집 건수', filtered.length.toLocaleString()+'건', '📦', PALETTE[0]),
+    kpiCard('품목 수', itemNames.length+'개', '🥬', PALETTE[1]),
+    kpiCard('최근 반영일', latestDate.slice(0,4)+'-'+latestDate.slice(4,6)+'-'+latestDate.slice(6,8), '📅', PALETTE[2]),
+    kpiCard(latestDate.slice(4,6)+'/'+latestDate.slice(6,8)+' 총 반입량', latestTotal.toLocaleString()+'톤', '🚚', PALETTE[3]),
+  ].join('');
+
+  const traces = itemNames.map(name => {
+    const rows = filtered.filter(r => r[1] === name).sort((a,b)=>a[0]<b[0]?-1:1);
+    return { x: rows.map(r=>toISO(r[0])), y: rows.map(r=>r[2]), mode:'lines+markers', name, line:{color:colorOf[name]}, marker:{size:4} };
+  });
+  Plotly.newPlot('garak-chart-trend', traces, { margin:{t:10,b:40,l:50,r:10}, hovermode:'x unified', yaxis:{title:'합계반입량(톤)'} }, {responsive:true});
+
+  const monthKey = d => d.slice(0,4)+'-'+d.slice(4,6);
+  const months = [...new Set(filtered.map(r => monthKey(r[0])))].sort();
+  const monthlyTraces = itemNames.map(name => {
+    const rows = filtered.filter(r => r[1] === name);
+    const byMonth = {}; months.forEach(m => byMonth[m] = 0);
+    rows.forEach(r => byMonth[monthKey(r[0])] += r[2]);
+    return { x: months, y: months.map(m=>byMonth[m]), type:'bar', name, marker:{color:colorOf[name]} };
+  });
+  Plotly.newPlot('garak-chart-monthly', monthlyTraces, { barmode:'group', margin:{t:10,b:60,l:50,r:10} }, {responsive:true});
+
+  const boxTraces = itemNames.map(name => {
+    const rows = filtered.filter(r => r[1] === name);
+    return { y: rows.map(r=>r[2]), type:'box', name, marker:{color:colorOf[name]} };
+  });
+  Plotly.newPlot('garak-chart-box', boxTraces, { margin:{t:10,b:40,l:50,r:10}, showlegend:false }, {responsive:true});
+
+  let tableHtml = '<table class="w-full"><thead><tr class="border-b border-outline-variant/20 text-left text-on-surface-variant"><th class="py-2">품목명</th><th>최소</th><th>최대</th><th>평균</th><th>합계</th></tr></thead><tbody>';
+  itemNames.forEach(name => {
+    const vals = filtered.filter(r => r[1]===name).map(r=>r[2]);
+    const min = Math.min(...vals), max = Math.max(...vals), sum = vals.reduce((a,b)=>a+b,0), avg = Math.round(sum/vals.length);
+    tableHtml += `<tr class="border-b border-outline-variant/10"><td class="py-2 font-semibold">${name}</td><td>${min.toLocaleString()}</td><td>${max.toLocaleString()}</td><td>${avg.toLocaleString()}</td><td>${sum.toLocaleString()}</td></tr>`;
+  });
+  tableHtml += '</tbody></table>';
+  document.getElementById('garak-table').innerHTML = tableHtml;
+}
+
+function renderClimate() {
+  const [startD, endD] = getClimateRange();
+  const nationwide = document.getElementById('climate-nationwide').checked;
+  let stations = document.getElementById('climate-stations').value.split(',').map(s=>s.trim()).filter(Boolean);
+
+  let filtered = CLIMATE_DATA.filter(r => r[0] >= startD && r[0] <= endD);
+  if (!nationwide && stations.length) {
+    filtered = filtered.filter(r => stations.includes(r[1]));
+  }
+  if (filtered.length === 0) {
+    document.getElementById('climate-kpis').innerHTML = '<p class="col-span-4 text-on-surface-variant">조건에 맞는 데이터가 없습니다.</p>';
+    return;
+  }
+
+  let displayRows = filtered;
+  let groupNames = [...new Set(filtered.map(r => r[1]))];
+
+  if (nationwide) {
+    const byDate = {};
+    filtered.forEach(r => {
+      if (!byDate[r[0]]) byDate[r[0]] = { n:0, avgTa:0, minTa:0, maxTa:0, sumRn:0, maxWs:0, avgWs:0 };
+      const g = byDate[r[0]];
+      g.n++; g.avgTa+=r[2]; g.minTa+=r[3]; g.maxTa+=r[4]; g.sumRn+=r[5]; g.maxWs+=r[6]; g.avgWs+=r[7];
+    });
+    displayRows = Object.keys(byDate).sort().map(d => {
+      const g = byDate[d];
+      return [d, '전국평균', Math.round(g.avgTa/g.n), Math.round(g.minTa/g.n), Math.round(g.maxTa/g.n), Math.round(g.sumRn/g.n), Math.round(g.maxWs/g.n), Math.round(g.avgWs/g.n)];
+    });
+    groupNames = ['전국평균'];
+  }
+
+  const dates = [...new Set(displayRows.map(r=>r[0]))].sort();
+  const latestDate = dates[dates.length-1];
+  const latestRows = displayRows.filter(r => r[0] === latestDate);
+  const avgTaLatest = Math.round(latestRows.reduce((a,r)=>a+r[2],0)/latestRows.length);
+  const rainLatest = Math.round(latestRows.reduce((a,r)=>a+r[5],0)/latestRows.length);
+
+  document.getElementById('climate-kpis').innerHTML = [
+    kpiCard('수집 건수', displayRows.length.toLocaleString()+'건', '📦', PALETTE[0]),
+    kpiCard('조회 지점 수', groupNames.length+'개', '📍', PALETTE[1]),
+    kpiCard(latestDate+' 평균기온', avgTaLatest+'°C', '🌡️', PALETTE[2]),
+    kpiCard(latestDate+' 강수량', rainLatest+'mm', '🌧️', PALETTE[3]),
+  ].join('');
+
+  const colorOf = {}; groupNames.forEach((n,i) => colorOf[n] = PALETTE[i % PALETTE.length]);
+  const tempTraces = [];
+  groupNames.forEach(name => {
+    const rows = displayRows.filter(r => r[1]===name).sort((a,b)=>a[0]<b[0]?-1:1);
+    tempTraces.push({ x: rows.map(r=>r[0]), y: rows.map(r=>r[2]), mode:'lines', name: name+' 평균', line:{color:colorOf[name]} });
+  });
+  Plotly.newPlot('climate-chart-temp', tempTraces, { margin:{t:10,b:40,l:50,r:10}, hovermode:'x unified', yaxis:{title:'기온(°C)'} }, {responsive:true});
+
+  const rainByGroup = groupNames.map(name => displayRows.filter(r=>r[1]===name).reduce((a,r)=>a+r[5],0));
+  Plotly.newPlot('climate-chart-rain', [{ x: groupNames, y: rainByGroup, type:'bar', marker:{color: groupNames.map(n=>colorOf[n])} }], { margin:{t:10,b:40,l:50,r:10} }, {responsive:true});
+
+  const windByGroup = groupNames.map(name => {
+    const rows = displayRows.filter(r=>r[1]===name);
+    return Math.round(rows.reduce((a,r)=>a+r[7],0)/rows.length);
+  });
+  Plotly.newPlot('climate-chart-wind', [{ x: groupNames, y: windByGroup, type:'bar', marker:{color: groupNames.map(n=>colorOf[n])} }], { margin:{t:10,b:40,l:50,r:10} }, {responsive:true});
+}
+
+// --------------------------------------------------------------------------
+// 기후-반입량 상관분석
+// --------------------------------------------------------------------------
+function pearson(xs, ys) {
+  const n = xs.length;
+  if (n < 3) return null;
+  const mx = xs.reduce((a,b)=>a+b,0)/n, my = ys.reduce((a,b)=>a+b,0)/n;
+  let num = 0, dx2 = 0, dy2 = 0;
+  for (let i = 0; i < n; i++) { const dx = xs[i]-mx, dy = ys[i]-my; num += dx*dy; dx2 += dx*dx; dy2 += dy*dy; }
+  const denom = Math.sqrt(dx2*dy2);
+  return denom === 0 ? 0 : num/denom;
+}
+
+let NATIONWIDE_TEMP_BY_DATE = null;
+function getNationwideTempByDate() {
+  if (NATIONWIDE_TEMP_BY_DATE) return NATIONWIDE_TEMP_BY_DATE;
+  const byDate = {};
+  CLIMATE_DATA.forEach(r => {
+    if (!byDate[r[0]]) byDate[r[0]] = { n: 0, sum: 0 };
+    byDate[r[0]].n++; byDate[r[0]].sum += r[2];
+  });
+  NATIONWIDE_TEMP_BY_DATE = {};
+  Object.keys(byDate).forEach(d => NATIONWIDE_TEMP_BY_DATE[d] = byDate[d].sum / byDate[d].n);
+  return NATIONWIDE_TEMP_BY_DATE;
+}
+
+function addDays(isoDate, days) {
+  const d = new Date(isoDate + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function populateAnalysisItems() {
+  const totals = {};
+  GARAK_DATA.forEach(r => { totals[r[1]] = (totals[r[1]] || 0) + r[2]; });
+  const names = Object.keys(totals).sort((a,b) => totals[b]-totals[a]).slice(0, 40);
+  const sel = document.getElementById('analysis-item');
+  sel.innerHTML = names.map(n => `<option value="${n}">${n}</option>`).join('');
+  sel.value = names.includes('배추') ? '배추' : names[0];
+}
+
+function renderAnalysis() {
+  const item = document.getElementById('analysis-item').value;
+  const startD = document.getElementById('analysis-start-date').value;
+  const endD = document.getElementById('analysis-end-date').value;
+
+  const garakByDate = {};
+  GARAK_DATA.forEach(r => {
+    if (r[1] !== item) return;
+    const iso = toISO(r[0]);
+    if (iso < startD || iso > endD) return;
+    garakByDate[iso] = r[2];
+  });
+  const tempByDate = getNationwideTempByDate();
+  const garakDates = Object.keys(garakByDate).sort();
+
+  if (garakDates.length < 3) {
+    document.getElementById('analysis-kpis').innerHTML = '<p class="col-span-4 text-on-surface-variant">분석할 데이터가 부족합니다.</p>';
+    return;
+  }
+
+  // 시차(lag)별 상관계수: 기온(t - lag) vs 반입량(t)
+  const lags = [0, 7, 14, 30, 45, 60];
+  const corrByLag = lags.map(lag => {
+    const xs = [], ys = [];
+    garakDates.forEach(d => {
+      const laggedDate = addDays(d, -lag);
+      if (tempByDate[laggedDate] !== undefined) { xs.push(tempByDate[laggedDate]); ys.push(garakByDate[d]); }
+    });
+    return { lag, r: pearson(xs, ys), n: xs.length };
+  }).filter(c => c.r !== null);
+
+  let bestLag = corrByLag.reduce((best, c) => Math.abs(c.r) > Math.abs(best.r) ? c : best, corrByLag[0]);
+
+  const recentDates = garakDates.slice(-7);
+  const recentAvg = recentDates.reduce((a,d)=>a+garakByDate[d],0) / recentDates.length;
+  const overallAvg = garakDates.reduce((a,d)=>a+garakByDate[d],0) / garakDates.length;
+  const supplyChangePct = overallAvg === 0 ? 0 : ((recentAvg - overallAvg) / overallAvg * 100);
+
+  const recentTemps = recentDates.map(d => tempByDate[d]).filter(v => v !== undefined);
+  const allTemps = garakDates.map(d => tempByDate[d]).filter(v => v !== undefined);
+  const recentTempAvg = recentTemps.reduce((a,b)=>a+b,0) / (recentTemps.length || 1);
+  const overallTempAvg = allTemps.reduce((a,b)=>a+b,0) / (allTemps.length || 1);
+  const tempDeviation = recentTempAvg - overallTempAvg;
+
+  const pressureSignal = (supplyChangePct < -10 && tempDeviation > 2) ? '공급 감소 + 고온 → 물가 상승 압력 신호'
+    : (supplyChangePct < -10 ? '공급 감소 신호' : (tempDeviation > 3 ? '고온 신호 (공급 영향 관찰 필요)' : '뚜렷한 신호 없음'));
+
+  document.getElementById('analysis-kpis').innerHTML = [
+    kpiCard('최근 7일 반입량 증감(전체기간 평균 대비)', supplyChangePct.toFixed(1)+'%', '🚚', supplyChangePct < 0 ? '#EF4444' : '#3B82F6'),
+    kpiCard('최근 7일 기온 편차(전체기간 평균 대비)', (tempDeviation>=0?'+':'')+tempDeviation.toFixed(1)+'°C', '🌡️', '#F97316'),
+    kpiCard(`최적 시차(${bestLag.lag}일) 상관계수`, bestLag.r.toFixed(2), '📐', '#8B5CF6'),
+    kpiCard('물가 압력 신호(추론)', pressureSignal, '⚠️', '#10B981'),
+  ].join('');
+
+  Plotly.newPlot('analysis-chart-lag', [{
+    x: corrByLag.map(c => c.lag + '일'), y: corrByLag.map(c => c.r), type: 'bar',
+    marker: { color: corrByLag.map(c => c.lag === bestLag.lag ? '#006d32' : '#93c5fd') },
+    text: corrByLag.map(c => c.r.toFixed(2)), textposition: 'outside',
+  }], { margin:{t:10,b:40,l:50,r:10}, yaxis:{title:'상관계수(r)', range:[-1,1]}, xaxis:{title:'기온 시차'} }, {responsive:true});
+
+  Plotly.newPlot('analysis-chart-overlay', [
+    { x: garakDates, y: garakDates.map(d=>garakByDate[d]), type:'bar', name: item+' 반입량(톤)', marker:{color:'#3B82F6'}, yaxis:'y' },
+    { x: garakDates, y: garakDates.map(d=>tempByDate[d]), type:'scatter', mode:'lines', name:'전국평균 기온(°C)', line:{color:'#dc2626', width:2}, yaxis:'y2' },
+  ], {
+    margin:{t:10,b:40,l:50,r:50}, hovermode:'x unified',
+    yaxis: { title: '반입량(톤)' }, yaxis2: { title: '기온(°C)', overlaying: 'y', side: 'right' },
+  }, {responsive:true});
+
+  const scatterXs = [], scatterYs = [];
+  garakDates.forEach(d => {
+    const laggedDate = addDays(d, -bestLag.lag);
+    if (tempByDate[laggedDate] !== undefined) { scatterXs.push(tempByDate[laggedDate]); scatterYs.push(garakByDate[d]); }
+  });
+  Plotly.newPlot('analysis-chart-scatter', [{
+    x: scatterXs, y: scatterYs, mode: 'markers', type: 'scatter',
+    marker: { color: '#006d32', opacity: 0.5, size: 6 },
+  }], {
+    margin:{t:10,b:40,l:50,r:10},
+    xaxis: { title: `${bestLag.lag}일 전 전국평균 기온(°C)` }, yaxis: { title: `${item} 반입량(톤)` },
+    annotations: [{ xref:'paper', yref:'paper', x:0.02, y:0.98, showarrow:false, text:`r = ${bestLag.r.toFixed(2)} (n=${scatterXs.length})`, font:{size:13, color:'#006d32'} }],
+  }, {responsive:true});
+}
+
+// ===================== 실시간 데이터 로딩 =====================
+// 백엔드(Render)에서 최신 가락시장/기후 데이터를 매번 가져와서 렌더링합니다.
+// 백엔드 주소가 바뀌면 아래 BACKEND_BASE 값만 수정하면 됩니다.
+const BACKEND_BASE = "https://garak-predict-api.onrender.com";
+
+async function loadDataAndRender() {
+  const statusEl = document.createElement('div');
+  statusEl.id = 'load-status';
+  statusEl.style.cssText = 'position:fixed;top:12px;right:12px;background:#1f2937;color:#fff;padding:8px 14px;border-radius:8px;font-size:13px;z-index:9999;';
+  statusEl.textContent = '⏳ 최신 데이터를 불러오는 중입니다... (서버가 잠들어 있으면 최대 1분 정도 걸릴 수 있어요)';
+  document.body.appendChild(statusEl);
+
+  try {
+    const [garakRes, climateRes] = await Promise.all([
+      fetch(`${BACKEND_BASE}/data/garak.json`),
+      fetch(`${BACKEND_BASE}/data/climate.json`),
+    ]);
+    if (!garakRes.ok || !climateRes.ok) throw new Error('서버 응답 오류');
+    GARAK_DATA = await garakRes.json();
+    CLIMATE_DATA = await climateRes.json();
+    statusEl.textContent = `✅ 최신 데이터 로드 완료 (가락시장 ${GARAK_DATA.length.toLocaleString()}행 / 기후 ${CLIMATE_DATA.length.toLocaleString()}행)`;
+    setTimeout(() => statusEl.remove(), 3000);
+  } catch (e) {
+    statusEl.textContent = '⚠️ 데이터를 불러오지 못했습니다. 잠시 후 새로고침 해주세요. (' + e.message + ')';
+    statusEl.style.background = '#b91c1c';
+    console.error(e);
+    return;
+  }
+
+  populateAnalysisItems();
+  renderAnalysis();
+  renderGarak();
+  renderClimate();
+}
+
+loadDataAndRender();
+</script>
+</body>
+</html>
